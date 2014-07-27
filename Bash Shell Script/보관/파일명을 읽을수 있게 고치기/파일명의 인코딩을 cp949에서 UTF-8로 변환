@@ -1,0 +1,13 @@
+#!/bin/bash
+
+{
+echo '=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+'
+date
+
+convmv -r -f cp949 -t utf-8 . --notest
+#convmv -r -f euc-kr -t utf-8 . --notest
+
+echo ''
+} 2>&1 | tee -a ~/"Home/.usersys/Log_nautilus-scripts/$(basename "$0").log"
+
+exit

@@ -1,0 +1,54 @@
+#!/bin/bash
+
+{
+echo '=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+'
+date
+
+IFS='
+'
+
+convert() {
+ d=`dirname $1`
+ mkdir "$d/html->txt" 2> /dev/null
+ f=$(echo "$1" | xargs -I {} grep -m 1 -i '<TITLE>' {} | sed -e 's/^.*<TITLE>//I' -e 's/<\/TITLE>.*$//I' -e "s/[\/]//g")
+ if [ ! "$f" ]
+ then
+  f=`echo "$1" | sed 's/.html$//I'`
+ fi
+ w3m -I cp949 -cols 98304 -dump "$1" | sed -r 's/━{40,}/━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━/' >> "$d/html->txt/$f.txt"
+}
+
+if [ "$CAJA_SCRIPT_SELECTED_FILE_PATHS" ]
+then
+ echo "$CAJA_SCRIPT_SELECTED_FILE_PATHS"
+ for i in `echo "$CAJA_SCRIPT_SELECTED_FILE_PATHS" | sed '$d'`
+ do
+  convert "$i"
+  cd ./'html->txt'
+  convmv -f cp949 -t utf-8 * --notest
+ done
+else
+ file=$(find "`pwd`" -iname '*.html' -type f -print)
+ echo "$file"
+ for i in $file
+ do
+  convert "$i"
+ done
+
+ qq=$( (for i in $file;
+do
+echo `dirname "$i"`
+done; ) | sort | uniq )
+ for i in $qq
+ do
+  cd "$i/html->txt"
+  convmv -f cp949 -t utf-8 * --notest
+ done
+
+zenity --info --title '알림' --text '작업이 완료되었습니다.'
+fi
+
+echo ''
+} 2>&1 | tee -a ~/"Home/.usersys/Log_nautilus-scripts/$(basename "$0").log"
+
+exit

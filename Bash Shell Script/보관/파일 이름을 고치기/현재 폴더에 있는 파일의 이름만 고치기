@@ -1,0 +1,71 @@
+#!/bin/bash
+: <<\EOF
+숨겨진 파일(name : .*)은 대상에서 제외된다.
+
+작업내용:
+uri incoding을 decoding
+'+', '_'를 제거(스페이스 문자로 치환)
+줄바꿈을 제거(스페이스 문자로 치환)
+시작과 끝에서의 공백문자를 제거
+파일의 확장자 앞의 공백문자를 제거
+EOF
+
+{
+echo '=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+'
+date
+
+:<<EOF
+if [ "$@" ]
+then
+ IFS=$(echo -en "\b")
+else
+ IFS='
+'
+ #줄바꿈을 제거
+ echo -e "\n줄바꿈을 제거합니다."
+ find . -maxdepth 1 -exec rename -v 's/\n/\ /g' "{}" \;
+fi
+EOF
+IFS=$(echo -en "\b")
+
+#파일 이름을 고침
+echo "
+파일 이름을 고칩니다.
+작업위치 : `pwd`
+작업대상 : ${*-`ls -1`}";
+
+for a in ${*-*}
+do
+ f=$(echo "$a" | tr -d '\n' | echo -e "$(sed 's/+/ /g; s/%/\\x/g')" | tr -d '\n' | echo -e "$(sed 's/+/ /g; s/%/\\x/g')" | sed -r -e 's/\+/\ /g' -e 's/◆/\ /g' -e 's/_/\ /g' -e 's/^\s+//' -e 's/\s+$//') #공통 수정
+ if [ -f "$a" ] #파일일 경우는 추가 수정
+ then f=$(echo "$f" | sed -r -e 's/\s+\.([^\.\s]+)$/.\1/')
+ fi
+ if [ "$a" != "$f" -a -e "$f" ] #수정될 이름을 가진 대상이 존재하는지 확인
+ then
+  erro=$(echo "$erro"; echo "$a") #에러 목록을 작성
+ elif [ "$a" != "$f" -a ! -e "$f" ]
+ then
+  mv -Tv "$a" "$f" #이름을 수정
+ fi
+done
+
+#작업 결과를 알림
+if [ "$erro" ]
+then
+ for i in $erro
+ do
+  erro_list=`echo -n "${erro_list} \"$i\""`
+ done
+ bash <<EOF
+ zenity --list \
+        --title "알림" \
+        --text "수정될 이름을 가진 대상이 존재합니다!" \
+        --height 400 \
+        --column '이름' $erro_list
+EOF
+fi
+
+echo ''
+} 2>&1 | tee -a ~/"Home/.usersys/Log_nautilus-scripts/$(basename "$0").log"
+
+exit
