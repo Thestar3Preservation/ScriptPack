@@ -47,7 +47,7 @@ resizePicture()
 	local image path
 	path=$1
 	for image in $(find "$path" -type f -a \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.bmp' -o -iname '*.gif' \)); do
-		mogrify "$image" -quality 100 -resize 1200x800
+		mogrify -quality 100 -resize 1200x800 "$image"
 	done
 }
 
@@ -59,7 +59,7 @@ resizeArchivePicture()
 	for archive in $(find Picture/ -type f -a -iname '*.zip'); do
 		mkdir $TEMP_DIR_PATH
 		unzip "$archive" -d $TEMP_DIR_PATH
-		if (( $(find $TEMP_DIR_PATH -mindepth 1 -type d | wc -l) > 1 )); then
+		if (( $(find $TEMP_DIR_PATH -type f -a \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.bmp' -o -iname '*.gif' \) | sed -r 's#/[^/]*$##' | sort -u | wc -l) > 1 )); then
 			skipList+=( "$archive" )
 			rm -rf $TEMP_DIR_PATH
 			continue
@@ -71,7 +71,8 @@ resizeArchivePicture()
 	done
 	if (( ${#skipList[@]} > 0 )); then
 		(kate --stdin <<-EOF
-		<< 하나 이상의 폴더를 포함한 사진 압축 파일 목록(처리되지 않음) >>
+		 * 파일에 존재하는 이미지가 두개 이상의 폴더에 나뉘어 저장되어 있습니다.
+		<< 처리되지 않은 파일 목록 >>
 		${skipList[*]}
 		EOF
 		)&
