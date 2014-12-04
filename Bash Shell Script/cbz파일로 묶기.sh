@@ -218,7 +218,7 @@ for i in "${worklist[@]}"; do
 # 			cd sort
 # 		fi
 		[ $type = dir ] && trash-put "$home/$i".$(replace_i cbz) "$home/$i".$(replace_i zip) 2>/dev/null || trash-put  "$home/$i" 2>/dev/null
-		zip -0rD "$home/$name.cbz" .
+		zip -0rjD "$home/$name.cbz" .
 		cd "$home"
 		if [ "$sub" ]; then
 			rm -r "$name"
