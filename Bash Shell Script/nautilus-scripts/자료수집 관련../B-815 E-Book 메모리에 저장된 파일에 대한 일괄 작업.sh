@@ -3,20 +3,29 @@ source ~/.bash_profile
 LOAD_USER_FUNTION
 
 :<<\EOF
+<< 기능 >>
  * 확장자 변경 cbz -> zip
- * cbz 파일은 폴더 경로를 유지한 채로 폴더 경로가 바뀝니다. Book/a/b/c/d.cbz -> Picture/a/b/c/d.zip
- * 모든 빈 폴더는 삭제 됩니다.
+ * 모든 파일은 폴더 경로를 유지한 채로 적절한 경로에 저장됩니다. Book/a/b/c/d.cbz -> Picture/a/b/c/d.zip
  * 사진 폴더에 존재하는 모든 이미지를 북큐브에 적합한 크기로 재조정합니다.
+ * pdf 파일을 cbz 파일로 바꿉니다.
+
+<< 사용법 >>
+ * 저장 장치를 연결한뒤, 저장 장치에 기록하고 싶은 파일들이 위치한 경로에서 이 스크립트를 실행시킨다.
+
+<< 문제 >>
+ * 만약 ./a/b/c.cbz 파일이 있고, /media/ebook/Picture/a/b란 파일이 있다면, 파일 경로 생성시 경로명 충돌 오류를 일으키게 된다. 이 문제를 해결하기 위해서는 dupev_mkdir에 -p 옵션을 추가하여 알아서 충복 경로를 회피하여 폴더를 생성하도록 하여야 한다. 미봉책으로, 이런 경로 충돌 문제가 발견 될 경우 처리 하지 않고 사용자에게 보고 하게 하였다.
 EOF
 
-EBOOK_ROOT_PATH=$PATH_EBOOKMEMORY
+EBOOK_ROOT_PATH=$PATH_EBOOKMEMORY # 절대 경로
 TEMP_DIR_PATH=/tmp/.bookcube-B815-$$
+GV_Log=
+GV_mkdirBreakList=
 
 reportError()
 {
 	local body
 	body=$1
-# 	notify-send -i error -u critical -- 'E-BOOK 형식 변환기' "$body"
+	#notify-send -i error -u critical -- 'E-BOOK 형식 변환기' "$body"
 	zenity --error --no-wrap --title 'E-BOOK 형식 변환기' --text "$body"
 }
 
@@ -29,86 +38,229 @@ crash()
 	exit $exitCode
 }
 
-# 책 폴더에 존재하는 모든 cbz파일을 경로를 유지한 채로 사진 폴더로 이동.
-moveBookInCbzToPicture()
+processForCbz()
 {
-	local filePath convertedPath
-	for filePath in $(find 'Book/' -type f -iname '*.cbz'); do
-		convertedPath=${filePath%.[Cc][Bb][Zz]}.zip
-		convertedPath=Picture/${convertedPath#Book/}
-		mkdir -p "${convertedPath%/*}"
-		mv "$filePath" "$convertedPath"
+	local archive skipList saveFullPath
+	
+	for archive in $(find ./ -type f -a -iname '*.cbz'); do
+		# 파일에 존재하는 이미지가 두개 이상의 폴더에 나뉘어 저장되어 있다면 건너뜀.
+		if (( $(viewZipList "$archive" | grep -Ei -e '\.jpe?g$' -e '\.png$' -e '\.bmp$' -e '\.gif$' | sed -e 's#^#/#' -e 's#/[^/]*$#/#' | sort -u | wc -l) > 1 )); then
+			skipList+=( "$archive" )
+			continue
+		fi
+		
+		saveFullPath=$(initSavePath Picture "$archive" "$(ex_name "$archive").zip") || continue
+		
+		initTempDir
+		unzip "$archive" -d $TEMP_DIR_PATH
+		resizePictures $TEMP_DIR_PATH
+		mkzip $TEMP_DIR_PATH "$saveFullPath" 
+		clearTempDir
+	done
+	
+	# 처리되지 않은 대상을 기록.
+	if (( ${#skipList[@]} > 0 )); then
+		GV_Log+=$(cat <<-EOF
+		<< 처리되지 않은 파일 목록 >>
+		 * 파일에 존재하는 이미지가 두개 이상의 폴더에 나뉘어 저장되어 있습니다.
+		${skipList[*]}
+		
+		
+		EOF
+		)
+	fi
+}
+
+# 저장 루트 폴더 $1(ex. Book, Picture...); 원본 경로 $2; 파일명(선택사항; 지정하지 않는다면 원본 파일명으로 지정됨.) $3(ex. filename.cbz...); 출력 : 중복되지 않는 이북 메모리 상의 저장 경로; 반환 값 : 0 성공, 1 : 실패.
+initSavePath()
+{
+	local savePath type src saveName
+	type=$1
+	src=$2
+	saveName=${3:-$(basename "$src")}
+	
+	savePath=$EBOOK_ROOT_PATH/$type/$(dirname "$src")
+	if ! mkdir -p "$savePath"; then
+		GV_mkdirBreakList+=( "$src" )
+		return 1
+	fi
+	
+	echo "$savePath/$(dupev_name -p "$savePath" -- "$saveName")"
+	return 0
+}
+
+# $1을 zip 형식의 파일로 $2(인자는 zip 확장자를 포함한 경로여야 함)에 저장한다.
+mkzip()
+{
+	local dest src
+	src=$1
+	dest=$2
+	zip -0rjq "$dest" "$src"
+}
+
+# pdf 파일을 cbz 형식의 파일로 바꾸어 저장한다.
+processForPdf()
+{
+	local file saveFullPath
+	for file in $(find ./ -type f -a -iname '*.pdf'); do
+		saveFullPath=$(initSavePath Picture "$file" "$(ex_name "$file").zip") || continue
+		initTempDir
+		pdftocairo "$file" -jpeg $TEMP_DIR_PATH/image
+		resizePictures $TEMP_DIR_PATH
+		mkzip $TEMP_DIR_PATH "$saveFullPath"
+		clearTempDir
 	done
 }
 
-# 대상 경로에 존재하는 단일 파일로 존재하는 이미지의 크기를 조정.
-resizePicture()
+clearTempDir()
+{
+	rm -rf $TEMP_DIR_PATH
+}
+
+# 지정된 경로의 jpeg, png, bmp, gif 파일을 리사이징 한다(원본 파일을 치환함).
+resizePictures()
 {
 	local image path
 	path=$1
 	for image in $(find "$path" -type f -a \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.bmp' -o -iname '*.gif' \)); do
-		mogrify -quality 100 -resize 1200x800 "$image"
+		resizeImage "$image" "$image"
 	done
 }
 
-# 사진 폴더에 묶음 파일로 존재하는 이미지의 크기 조정.
-resizeArchivePicture()
+# jpeg, png, bmp, gif 파일을 리사이징 한다.
+processForPicture()
 {
-	local archive skipList
-	test -e $TEMP_DIR_PATH && rm -rf $TEMP_DIR_PATH
-	for archive in $(find Picture/ -type f -a -iname '*.zip'); do
-		mkdir $TEMP_DIR_PATH
-		unzip "$archive" -d $TEMP_DIR_PATH
-		if (( $(find $TEMP_DIR_PATH -type f -a \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.bmp' -o -iname '*.gif' \) | sed -r 's#/[^/]*$##' | sort -u | wc -l) > 1 )); then
-			skipList+=( "$archive" )
-			rm -rf $TEMP_DIR_PATH
-			continue
-		fi
-		resizePicture $TEMP_DIR_PATH
-		rm -f "$archive"
-		zip -0rjq "$archive" $TEMP_DIR_PATH
-		rm -rf $TEMP_DIR_PATH
+	local image saveFullPath
+	for image in $(find ./ -type f -a \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.bmp' -o -iname '*.gif' \)); do
+		saveFullPath=$(initSavePath Picture "$image") || continue
+		resizeImage "$image" "$saveFullPath"
 	done
-	if (( ${#skipList[@]} > 0 )); then
-		(kate --stdin <<-EOF
-		 * 파일에 존재하는 이미지가 두개 이상의 폴더에 나뉘어 저장되어 있습니다.
+}
+
+# $1을 리사이징 하여 $2로 저장한다.
+resizeImage()
+{
+	local src dest
+	src=$1
+	dest=$2
+	#mogrify -colorspace gray -type grayscale -quality 100 -resize 1200x800 "$image"
+	convert "$src" -colorspace gray -type grayscale -quality 100 -resize 1200x800 "$dest"
+}
+
+# 임시 폴더를 초기화.
+initTempDir()
+{
+	test -e $TEMP_DIR_PATH && rm -rf $TEMP_DIR_PATH
+	mkdir $TEMP_DIR_PATH
+}
+
+# 음악을 분류.
+processForMusic()
+{
+	local file saveFullPath
+	for file in $(find ./ -type f -a \( -iname '*.mp3' -o -iname '*.wav' -o -iname '*.wma' \)); do
+		saveFullPath=$(initSavePath Music "$file") || continue
+		resizeImage "$file" "$saveFullPath"
+	done
+}
+
+# 기타 책을 분류.
+# 다음 형식은 매직 넘버로 분류해야 함. plucker, 
+# 알 수 없는 형식. OpenReader, Palmdoc, Mobipocket
+# 처리 하지 않는 형식. 확장자가 없는 평문 텍스트 파일.
+processForBook()
+{
+	local file saveFullPath
+	for file in $(find ./ -type f -a \( -iname '*.bcb' -o -iname '*.bcp' -o -iname '*.bcz' -o -iname '*.ePub' -o -iname '*.fb2' -o -iname '*.oeb' -o -iname '*.htm' -o -iname '*.html' -o -iname '*.tcr' -o -iname '*.chm' -o -iname '*.rtf' -o -iname '*.txt' \)); do
+		saveFullPath=$(initSavePath Book "$file") || continue
+		dupev_cp -- "$file" "$saveFullPath"
+	done
+}
+
+# Bookcube에서 지원하지 않는 형식의 파일들을 사용자에게 보고.
+# zip 확장자의 파일은 압축된 텍스트 파일이나 이미지 파일 묶음에 사용될 수 있으나, 여기서는 처리하지 않음.
+findNotSupportFormatFile()
+{
+	local notSuportedFileList
+	notSuportedFileList=$(find ./ -type l -o -type f -a -not \( -iname '*.bcb' -o -iname '*.bcp' -o -iname '*.bcz' -o -iname '*.ePub' -o -iname '*.fb2' -o -iname '*.oeb' -o -iname '*.htm' -o -iname '*.html' -o -iname '*.tcr' -o -iname '*.chm' -o -iname '*.rtf' -o -iname '*.txt' -o -iname '*.mp3' -o -iname '*.wav' -o -iname '*.wma' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.bmp' -o -iname '*.gif' -o -iname '*.pdf' -o -iname '*.cbz' \))
+	if [ -n "$notSuportedFileList" ]; then
+		GV_Log+=$(cat <<-EOF
 		<< 처리되지 않은 파일 목록 >>
-		${skipList[*]}
+		 * 지원하지 않는 형식의 파일
+		$notSuportedFileList
+		
+		
 		EOF
-		)&
+		)
 	fi
+}
+
+# $1경로에 존재하는 zip 파일의 파일 목록을 보여준다.
+viewZipList()
+{
+	local file
+	file=$1
+	unzip -l "$file" | head -n -2 | tail -n +4 | awk '{print substr($0,index($0,$4))}'
+}
+
+# 작업 로그를 보여줌.
+showLog()
+{
+	[ -n "$GV_Log" ] && (kate --stdin <<<"$GV_Log") &
+}
+
+# 작업 완료를 보고
+reportWorkEnd()
+{
+	zenity --info --no-wrap --title 'E-BOOK 형식 변환기' --text '작업이 완료되었습니다.'
+	#notify-send -u normal 'E-BOOK 형식 변환기' '작업이 완료되었습니다.'
+}
+
+# 경로 충돌 대상을 기록.
+recodeBreakList()
+{
+	if (( ${#GV_mkdirBreakList[@]} > 0 )); then
+		GV_Log+=$(cat <<-EOF
+		<< 처리되지 않은 파일 목록 >>
+		 * 상대 경로로 폴더를 생성시 충돌이 발생 했습니다.
+		${GV_mkdirBreakList[*]}
+		
+		
+		EOF
+		)
+	fi	
+}
+
+checkCard()
+{
+	test -d "$EBOOK_ROOT_PATH" || crash 5 'E-BOOK 메모리 카드를 삽입하여 주십시오!'
+}
+
+initProgram()
+{
+	umask 0077
 }
 
 main()
 {
-	test -d "$EBOOK_ROOT_PATH" || crash 5 'E-BOOK 메모리 카드를 삽입하여 주십시오!'
+	checkCard
+	initProgram
 	
-	cd "$EBOOK_ROOT_PATH" || crash 6 '경로를 변경하던 도중 문제가 발생했습니다!'
+	processForCbz
+	processForPicture
+	processForPdf
+	processForMusic
+	processForBook
 	
-	umask 0077
+	findNotSupportFormatFile
+	recodeBreakList
+	showLog
 	
-	mkdir -p 'Picture' 'Book' 'Music' || crash 7 '작업 대상 폴더를 초기화하던 도중 오류가 발생했습니다!'
-	
-	moveBookInCbzToPicture
-	
-	# 사진 폴더에 존재하는 모든 cbz파일의 확장자를 zip으로 변경
-	find 'Picture/' -type f -iname '*.cbz' -exec rename 's/\.cbz$/.zip/i' {} \;
-	
-	resizePicture Picture/
-	
-	resizeArchivePicture
-	
-	# 모든 빈 폴더를 삭제
-	find 'Picture/' 'Book/' 'Music/' -type d -empty -delete
-	
-	# 작업 완료를 보고
-	zenity --info --no-wrap --title 'E-BOOK 형식 변환기' --text '작업이 완료되었습니다.'
-	#notify-send -u normal 'E-BOOK 형식 변환기' '작업이 완료되었습니다.'
-	
+	reportWorkEnd
 	exit 0
 }
 
-main
+main "$@"
 
 :<<\EOF
 #!/usr/bin/env bash_record
