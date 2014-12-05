@@ -18,8 +18,9 @@ EOF
 
 EBOOK_ROOT_PATH=$PATH_EBOOKMEMORY # 절대 경로
 TEMP_DIR_PATH=/tmp/.bookcube-B815-$$
-GV_Log=
-GV_mkdirBreakList=
+GV_log=
+GV_mkdirBreakList=()
+GV_processFailList=()
 
 reportError()
 {
@@ -52,22 +53,26 @@ processForCbz()
 		saveFullPath=$(initSavePath Picture "$archive" "$(ex_name "$archive").zip") || continue
 		
 		initTempDir
-		unzip "$archive" -d $TEMP_DIR_PATH
+		if ! unzip "$archive" -d $TEMP_DIR_PATH; then
+			GV_processFailList+=( "$archive" )
+			continue
+		fi
 		resizePictures $TEMP_DIR_PATH
-		mkzip $TEMP_DIR_PATH "$saveFullPath" 
+		if ! mkzip $TEMP_DIR_PATH "$saveFullPath" ; then
+			GV_processFailList+=( "$archive" )
+			continue
+		fi
 		clearTempDir
 	done
 	
 	# 처리되지 않은 대상을 기록.
 	if (( ${#skipList[@]} > 0 )); then
-		GV_Log+=$(cat <<-EOF
+		GV_log+=$(cat <<-EOF
 		<< 처리되지 않은 파일 목록 >>
 		 * 파일에 존재하는 이미지가 두개 이상의 폴더에 나뉘어 저장되어 있습니다.
 		${skipList[*]}
-		
-		
 		EOF
-		)
+		)$'\n\n'
 	fi
 }
 
@@ -105,9 +110,16 @@ processForPdf()
 	for file in $(find ./ -type f -a -iname '*.pdf'); do
 		saveFullPath=$(initSavePath Picture "$file" "$(ex_name "$file").zip") || continue
 		initTempDir
-		pdftocairo "$file" -jpeg $TEMP_DIR_PATH/image
+		if ! pdftocairo "$file" -jpeg $TEMP_DIR_PATH/image; then
+			GV_processFailList+=( "$file" )
+			continue
+		fi
+		#convert "$file" -trim -colorspace gray -type grayscale -quality 100 -resize 1200x800 $TEMP_DIR_PATH/image.jpg
 		resizePictures $TEMP_DIR_PATH
-		mkzip $TEMP_DIR_PATH "$saveFullPath"
+		if ! mkzip $TEMP_DIR_PATH "$saveFullPath"; then
+			GV_processFailList+=( "$file" )
+			continue
+		fi
 		clearTempDir
 	done
 }
@@ -133,7 +145,10 @@ processForPicture()
 	local image saveFullPath
 	for image in $(find ./ -type f -a \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.bmp' -o -iname '*.gif' \)); do
 		saveFullPath=$(initSavePath Picture "$image") || continue
-		resizeImage "$image" "$saveFullPath"
+		if ! resizeImage "$image" "$saveFullPath"; then
+			GV_processFailList+=( "$image" )
+			continue
+		fi
 	done
 }
 
@@ -160,7 +175,7 @@ processForMusic()
 	local file saveFullPath
 	for file in $(find ./ -type f -a \( -iname '*.mp3' -o -iname '*.wav' -o -iname '*.wma' \)); do
 		saveFullPath=$(initSavePath Music "$file") || continue
-		resizeImage "$file" "$saveFullPath"
+		dupev_cp -- "$file" "$saveFullPath"
 	done
 }
 
@@ -184,14 +199,12 @@ findNotSupportFormatFile()
 	local notSuportedFileList
 	notSuportedFileList=$(find ./ -type l -o -type f -a -not \( -iname '*.bcb' -o -iname '*.bcp' -o -iname '*.bcz' -o -iname '*.ePub' -o -iname '*.fb2' -o -iname '*.oeb' -o -iname '*.htm' -o -iname '*.html' -o -iname '*.tcr' -o -iname '*.chm' -o -iname '*.rtf' -o -iname '*.txt' -o -iname '*.mp3' -o -iname '*.wav' -o -iname '*.wma' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.bmp' -o -iname '*.gif' -o -iname '*.pdf' -o -iname '*.cbz' \))
 	if [ -n "$notSuportedFileList" ]; then
-		GV_Log+=$(cat <<-EOF
+		GV_log+=$(cat <<-EOF
 		<< 처리되지 않은 파일 목록 >>
 		 * 지원하지 않는 형식의 파일
 		$notSuportedFileList
-		
-		
 		EOF
-		)
+		)$'\n\n'
 	fi
 }
 
@@ -206,7 +219,7 @@ viewZipList()
 # 작업 로그를 보여줌.
 showLog()
 {
-	[ -n "$GV_Log" ] && (kate --stdin <<<"$GV_Log") &
+	[ -n "$GV_log" ] && (kate --stdin <<<"$GV_log") &
 }
 
 # 작업 완료를 보고
@@ -220,14 +233,12 @@ reportWorkEnd()
 recodeBreakList()
 {
 	if (( ${#GV_mkdirBreakList[@]} > 0 )); then
-		GV_Log+=$(cat <<-EOF
+		GV_log+=$(cat <<-EOF
 		<< 처리되지 않은 파일 목록 >>
 		 * 상대 경로로 폴더를 생성시 충돌이 발생 했습니다.
 		${GV_mkdirBreakList[*]}
-		
-		
 		EOF
-		)
+		)$'\n\n'
 	fi	
 }
 
@@ -239,6 +250,18 @@ checkCard()
 initProgram()
 {
 	umask 0077
+}
+
+recodeFaileList()
+{
+	if (( ${#GV_processFailList[@]} > 0 )); then
+		GV_log+=$(cat <<-EOF
+		<< 처리되지 않은 파일 목록 >>
+		 * 알 수 없는 이유로 인하여 파일 처리에 실패했습니다.
+		${GV_processFailList[*]}
+		EOF
+		)$'\n\n'
+	fi	
 }
 
 main()
@@ -254,6 +277,7 @@ main()
 	
 	findNotSupportFormatFile
 	recodeBreakList
+	recodeFaileList
 	showLog
 	
 	reportWorkEnd
