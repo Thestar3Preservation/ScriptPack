@@ -9,18 +9,25 @@ LOAD_USER_FUNTION
  * 사진 폴더에 존재하는 모든 이미지를 북큐브에 적합한 크기로 재조정합니다.
  * pdf 파일을 cbz 파일로 바꿉니다.
 
+<< 주의 >>
+ * 작업 대상은 검색 가능하도록 변환되어 있어야 합니다.
+
 << 사용법 >>
  * 저장 장치를 연결한뒤, 저장 장치에 기록하고 싶은 파일들이 위치한 경로에서 이 스크립트를 실행시킨다.
+ * 또는 대상 폴더나 파일을 선택한뒤 이 스크립트를 실행시킨다.
 
 << 문제 >>
  * 만약 ./a/b/c.cbz 파일이 있고, /media/ebook/Picture/a/b란 파일이 있다면, 파일 경로 생성시 경로명 충돌 오류를 일으키게 된다. 이 문제를 해결하기 위해서는 dupev_mkdir에 -p 옵션을 추가하여 알아서 충복 경로를 회피하여 폴더를 생성하도록 하여야 한다. 미봉책으로, 이런 경로 충돌 문제가 발견 될 경우 처리 하지 않고 사용자에게 보고 하게 하였다.
+ * pdf 파일을 코믹북 뷰어 파일로 변환 시킬 경우, 보이지 않아야 할 부분까지 포함되어 저장되는 경우가 있다. 이 문제를 해결하기 위해서는 gimp의 batch 기능을 사용해야 한다. 다른 프로그램은 문자로만 구성된 pdf를 이미지로 변환시키는건 잘되나, 이미지가 포함된 pdf를 변환할 경우 변환된 이미지는 인식 불가능 할 정도로 깨져 버린다.
 EOF
 
 EBOOK_ROOT_PATH=$PATH_EBOOKMEMORY # 절대 경로
 TEMP_DIR_PATH=/tmp/.bookcube-B815-$$
 GV_log=
+GV_searchPathList=()
 GV_mkdirBreakList=()
 GV_processFailList=()
+GV_convertFailedOdtList=()
 
 reportError()
 {
@@ -39,11 +46,22 @@ crash()
 	exit $exitCode
 }
 
+makeSearchListArray()
+{
+	local list path
+	list=( "$@" )
+	GV_searchPathList=()
+	for path in "${list[@]}"; do
+		GV_searchPathList+=( "./$path/" )
+	done
+	(( ${#GV_searchPathList[@]} == 0 )) && GV_searchPathList=( ./ )
+}
+
 processForCbz()
 {
 	local archive skipList saveFullPath
 	
-	for archive in $(find ./ -type f -a -iname '*.cbz'); do
+	for archive in $(find "${GV_searchPathList[@]}" -type f -a -iname '*.cbz'); do
 		# 파일에 존재하는 이미지가 두개 이상의 폴더에 나뉘어 저장되어 있다면 건너뜀.
 		if (( $(viewZipList "$archive" | grep -Ei -e '\.jpe?g$' -e '\.png$' -e '\.bmp$' -e '\.gif$' | sed -e 's#^#/#' -e 's#/[^/]*$#/#' | sort -u | wc -l) > 1 )); then
 			skipList+=( "$archive" )
@@ -107,7 +125,7 @@ mkzip()
 processForPdf()
 {
 	local file saveFullPath
-	for file in $(find ./ -type f -a -iname '*.pdf'); do
+	for file in $(find "${GV_searchPathList[@]}" -type f -a -iname '*.pdf'); do
 		saveFullPath=$(initSavePath Picture "$file" "$(ex_name "$file").zip") || continue
 		initTempDir
 		if ! pdftocairo "$file" -jpeg $TEMP_DIR_PATH/image; then
@@ -143,7 +161,7 @@ resizePictures()
 processForPicture()
 {
 	local image saveFullPath
-	for image in $(find ./ -type f -a \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.bmp' -o -iname '*.gif' \)); do
+	for image in $(find "${GV_searchPathList[@]}" -type f -a \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.bmp' -o -iname '*.gif' \)); do
 		saveFullPath=$(initSavePath Picture "$image") || continue
 		if ! resizeImage "$image" "$saveFullPath"; then
 			GV_processFailList+=( "$image" )
@@ -173,9 +191,9 @@ initTempDir()
 processForMusic()
 {
 	local file saveFullPath
-	for file in $(find ./ -type f -a \( -iname '*.mp3' -o -iname '*.wav' -o -iname '*.wma' \)); do
+	for file in $(find "${GV_searchPathList[@]}" -type f -a \( -iname '*.mp3' -o -iname '*.wav' -o -iname '*.wma' \)); do
 		saveFullPath=$(initSavePath Music "$file") || continue
-		dupev_cp -- "$file" "$saveFullPath"
+		cp -f -- "$file" "$saveFullPath"
 	done
 }
 
@@ -186,9 +204,9 @@ processForMusic()
 processForBook()
 {
 	local file saveFullPath
-	for file in $(find ./ -type f -a \( -iname '*.bcb' -o -iname '*.bcp' -o -iname '*.bcz' -o -iname '*.ePub' -o -iname '*.fb2' -o -iname '*.oeb' -o -iname '*.htm' -o -iname '*.html' -o -iname '*.tcr' -o -iname '*.chm' -o -iname '*.rtf' -o -iname '*.txt' \)); do
+	for file in $(find "${GV_searchPathList[@]}" -type f -a \( -iname '*.bcb' -o -iname '*.bcp' -o -iname '*.bcz' -o -iname '*.ePub' -o -iname '*.fb2' -o -iname '*.oeb' -o -iname '*.htm' -o -iname '*.html' -o -iname '*.tcr' -o -iname '*.chm' -o -iname '*.rtf' -o -iname '*.txt' \)); do
 		saveFullPath=$(initSavePath Book "$file") || continue
-		dupev_cp -- "$file" "$saveFullPath"
+		cp -f -- "$file" "$saveFullPath"
 	done
 }
 
@@ -197,7 +215,7 @@ processForBook()
 findNotSupportFormatFile()
 {
 	local notSuportedFileList
-	notSuportedFileList=$(find ./ -type l -o -type f -a -not \( -iname '*.bcb' -o -iname '*.bcp' -o -iname '*.bcz' -o -iname '*.ePub' -o -iname '*.fb2' -o -iname '*.oeb' -o -iname '*.htm' -o -iname '*.html' -o -iname '*.tcr' -o -iname '*.chm' -o -iname '*.rtf' -o -iname '*.txt' -o -iname '*.mp3' -o -iname '*.wav' -o -iname '*.wma' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.bmp' -o -iname '*.gif' -o -iname '*.pdf' -o -iname '*.cbz' \))
+	notSuportedFileList=$(find "${GV_searchPathList[@]}" -type l -o -type f -a -not \( -iname '*.bcb' -o -iname '*.bcp' -o -iname '*.bcz' -o -iname '*.ePub' -o -iname '*.fb2' -o -iname '*.oeb' -o -iname '*.htm' -o -iname '*.html' -o -iname '*.tcr' -o -iname '*.chm' -o -iname '*.rtf' -o -iname '*.txt' -o -iname '*.mp3' -o -iname '*.wav' -o -iname '*.wma' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.bmp' -o -iname '*.gif' -o -iname '*.pdf' -o -iname '*.cbz' -o -iname '*.odt' \))
 	if [ -n "$notSuportedFileList" ]; then
 		GV_log+=$(cat <<-EOF
 		<< 처리되지 않은 파일 목록 >>
@@ -242,16 +260,6 @@ recodeBreakList()
 	fi	
 }
 
-checkCard()
-{
-	test -d "$EBOOK_ROOT_PATH" || crash 5 'E-BOOK 메모리 카드를 삽입하여 주십시오!'
-}
-
-initProgram()
-{
-	umask 0077
-}
-
 recodeFaileList()
 {
 	if (( ${#GV_processFailList[@]} > 0 )); then
@@ -264,20 +272,61 @@ recodeFaileList()
 	fi	
 }
 
+processForOdt()
+{
+	local file saveFullPath i MAX_TRAY ext 
+	MAX_TRAY=3
+	for file in $(find "${GV_searchPathList[@]}" -type f -a -iname '*.odt'); do
+		initTempDir
+		if ebook-convert "$file" $TEMP_DIR_PATH/temp.fb2; then
+			ext=fb2
+		else
+			for((i = 0; i < MAX_TRAY; i++)); do
+				unoconv --listener &>/dev/null &
+				unoconv -o $TEMP_DIR_PATH -f pdf -- "$file" && break
+			done
+			if (( i == MAX_TRAY )); then
+				GV_convertFailedOdtList+=( "$file" )
+				continue
+			else
+				ext=pdf
+			fi
+		fi
+		saveFullPath=$(initSavePath Book "$file" "$(ex_name "$file").$ext") || continue
+		cp -f -- "$TEMP_DIR_PATH/$(ls -A $TEMP_DIR_PATH)" "$saveFullPath"
+		clearTempDir
+	done
+}
+
+recodeConvertFailedOdtList()
+{
+	if (( ${#GV_convertFailedOdtList[@]} > 0 )); then
+		GV_log+=$(cat <<-EOF
+		<< 변환에 실패한 odt 파일 목록 >>
+		 * odt 파일을 fb2 또는 pdf 포멧으로 변환하던 중 오류가 발생했습니다.
+		${GV_convertFailedOdtList[*]}
+		EOF
+		)$'\n\n'
+	fi	
+}
+
 main()
 {
-	checkCard
-	initProgram
+	test -d "$EBOOK_ROOT_PATH" || crash 5 'E-BOOK 메모리 카드를 삽입하여 주십시오!'
+	umask 0077
+	makeSearchListArray "$@"
 	
 	processForCbz
 	processForPicture
-	processForPdf
 	processForMusic
+	processForPdf
+	processForOdt
 	processForBook
 	
 	findNotSupportFormatFile
 	recodeBreakList
 	recodeFaileList
+	recodeConvertFailedOdtList
 	showLog
 	
 	reportWorkEnd
@@ -285,140 +334,3 @@ main()
 }
 
 main "$@"
-
-:<<\EOF
-#!/usr/bin/env bash_record
-#북큐브 전자책 리더기(B-815)에 알맞는 포멧으로 자동으로 변환시킵니다. 검색 가능하도록 변환된 대상들을 대상외에는 정상 작동을 보장하지 않습니다.
-source ~/.bash_profile
-LOAD_USER_FUNTION
-
-# ### ### ### 환경변수 설정 ### ### ### #
-HomeDisk=$PATH_EBOOKMEMORY
-# iconvtxtOP=-c
-
-# ### ### ### 작업위치가 올바른지 검사 ### ### ### #
-GHomeDisk=$(g_quote "$HomeDisk")
-if ! pwd | grep -E -e "^$GHomeDisk/?$" -e "^$GHomeDisk/"; then
-	notifyecho critical "$HomeDisk에서만 작동하도록 되어 있습니다."
-	exit
-fi
-
-# ### ### ### 변수 초기화 및 함수 선언 ### ### ### #
-{
-	home=$PWD
-	Hpid=$$
-	Picture=$HomeDisk/Picture
-	[ -e "$Picture" ] || mkdir "$Picture"
-	workpath=$(sed "s/^$GHomeDisk//" <<<"$home")
-	Error=n
-	notifyecho(){
-		echo "$2" >&2
-		notify-send -u $1 "$2"
-	}
-	mklist(){
-		for((;;)); do
-			IFS=$'\0' read -r -d $'\0' i || break
-			ls+=( "$i" )
-		done < <(find "$1" -depth -type f -print0)
-	}
-	umask 077
-	linkPATH=$(dupev_mkdir /tmp/.link)
-	mkdir -vp "$linkPATH"/maff{,_f}
-	ln_doc(){
-		local save=$linkPATH/$1
-		ln -s "$PWD/$i" "$save/$(dupev_name -p "$save" -- "$i")"
-	}
-}
-
-# ### ### ### 작업 대상의 목록을 작성하고 검사 ### ### ### #
-{
-	if [ -n "$*" ]; then
-		for i; do mklist "./$i"; done
-	else
-		mklist .
-		unset ls[$((${#ls[@]}-1))]
-	fi
-
-	if [ ${#ls[@]} = 0 ]; then
-		notifyecho normal '작업할 대상이 존재하지 않습니다.'
-		exit
-	fi
-}
-
-# ### ### ### 작업 초기화 및 문서 변환 ### ### ### #
-{
-	echo 0 > /tmp/.progress-$Hpid
-	while true; do cat /tmp/.progress-$Hpid; sleep 0.1; done | zenity --title 'B-815에 알맞는 문서로 변환' --text "문서 변환 중...\n작업 위치 : $workpath" --auto-close --progress --width 525 || kill $Hpid &
-	count=0
-	max=${#ls[@]}
-
-	for i in "${ls[@]}"; do
-		((count++))
-		temp=$(echo "$count/$max*100" | bc -l | cut -d . -f 1)
-		if [ -z "$temp" ]; then
-			echo 0
-		elif [ $temp = 100 ]; then
-			echo 99
-		else
-			echo $temp
-		fi > "/tmp/.progress-$Hpid"
-		cd "$home"
-		cd "$(dirname "$i")"
-		i=$(basename "$i")
-		echo "~~~TARGET : $i~~~"
-		name=$(ex_name "$i")
-		ext=$(ex_ext -d -- "$i")
-		case "$ext" in
-		cbz)
-			dupev_mv -- "$i" "$Picture/$name.zip"
-			;;
-		zip | jpg | gif | png | jpeg)
-			dupev_mv -- "$i" "$Picture"
-			;;
-# 		txt)
-# 			code=$(iconv -f UTF-8 "${iconvtxtOP[@]}" -t UHC -- "$i") && cat <<<"$code" >"$i"
-# 			;;
-		odt)
-			if ebook-convert "./$i" "./$(dupev_name -p . -- "$name.fb2")"; then
-				rm -- "$i"
-			else
-				for j in {1..3}; do
-					unoconv --listener &>/dev/null &
-					if unoconv -f pdf -- "$i"; then
-						rm -- "$i"
-						break
-					else
-						[ $j = 3 ] && Error=y
-					fi
-				done
-			fi
-			;;
-		maff | webarchive)
-			ln_doc maff
-			;;
-		*)
-			echo "'$ext'는 등록되지 않은 확장자입니다."
-			unKnownEXT=$i$'\n'
-			;;
-		esac
-	done
-}
-
-# ### ### ### 작업 종료 및 작업 결과를 보고 ### ### ### #
-{
-	cd "$home"
-	echo 100 > /tmp/.progress-$Hpid
-	echo "$unKnownEXT" > "$linkPATH/UnnownExtList.txt"
-	rmdir "$linkPATH"/* "$linkPATH"
-	[ -d "$linkPATH" ] && xdg-open "$linkPATH" &
-
-	temp="PATH : <a href='$home'>$workpath</a>"
-	if [ $Error = y ]; then
-		notify-send -i error -u critical '라이브러리 자료 변환 완료됨.' "작업도중 오류가 발생했습니다.\n$temp"
-	else
-		notify-send '라이브러리 자료 변환 완료됨.' "$temp"
-	fi
-
-	exit
-}
-EOF
