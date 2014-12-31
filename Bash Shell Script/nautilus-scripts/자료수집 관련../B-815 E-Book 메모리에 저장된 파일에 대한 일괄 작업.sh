@@ -205,11 +205,11 @@ processForMusic()
 # 256kbps mono나 stereo 모두 정상 동작 하는 걸로 확인됨. mono와 stereo는 결과에 영향을 미치지 않는 것 같다.
 processForMp3()
 {
-	local file saveFullPath temp mode bitrate convertBitrate
+	local file saveFullPath bitrate convertBitrate #mode temp
 	for file in $(find "${GV_searchPathList[@]}" -type f -a -iname '*.mp3'); do
 		saveFullPath=$(initSavePath Music "$file") || continue
-		temp=$(mp3info -r v -p '%r:%o' "$file")
-		bitrate=${temp%:}
+		#temp=$(mp3info -r v -p '%r:%o' "$file")
+		bitrate=$(mp3info -r v -p '%r' "$file")
 		#mode=$(grep -wFio -e stereo -e mono <<<"${temp#:}")
 		if (( bitrate == 256 || bitrate == 320 )); then
 			cp -f -- "$file" "$saveFullPath"
