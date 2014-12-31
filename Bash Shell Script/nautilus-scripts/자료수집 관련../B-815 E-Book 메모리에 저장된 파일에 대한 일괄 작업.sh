@@ -193,7 +193,7 @@ initTempDir()
 processForMusic()
 {
 	local file saveFullPath
-	for file in $(find "${GV_searchPathList[@]}" -type f -a \( -iname '*.mp3' -o -iname '*.wav' -o -iname '*.wma' \)); do
+	for file in $(find "${GV_searchPathList[@]}" -type f -a \( -iname '*.wav' -o -iname '*.wma' \)); do
 		saveFullPath=$(initSavePath Music "$file") || continue
 		cp -f -- "$file" "$saveFullPath"
 	done
