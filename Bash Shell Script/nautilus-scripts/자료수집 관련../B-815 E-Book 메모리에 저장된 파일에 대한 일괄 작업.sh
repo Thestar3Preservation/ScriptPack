@@ -19,6 +19,7 @@ LOAD_USER_FUNTION
 << 문제 >>
  * 만약 ./a/b/c.cbz 파일이 있고, /media/ebook/Picture/a/b란 파일이 있다면, 파일 경로 생성시 경로명 충돌 오류를 일으키게 된다. 이 문제를 해결하기 위해서는 dupev_mkdir에 -p 옵션을 추가하여 알아서 충복 경로를 회피하여 폴더를 생성하도록 하여야 한다. 미봉책으로, 이런 경로 충돌 문제가 발견 될 경우 처리 하지 않고 사용자에게 보고 하게 하였다.
  * pdf 파일을 코믹북 뷰어 파일로 변환 시킬 경우, 보이지 않아야 할 부분까지 포함되어 저장되는 경우가 있다. 이 문제를 해결하기 위해서는 gimp의 batch 기능을 사용해야 한다. 다른 프로그램은 문자로만 구성된 pdf를 이미지로 변환시키는건 잘되나, 이미지가 포함된 pdf를 변환할 경우 변환된 이미지는 인식 불가능 할 정도로 깨져 버린다.
+ * 임시 폴더와 임시 템플릿 파일이 생성시 경로 충돌 가능성이 존재한다.
 EOF
 
 EBOOK_ROOT_PATH=$PATH_EBOOKMEMORY # 절대 경로
@@ -52,7 +53,7 @@ makeSearchListArray()
 	list=( "$@" )
 	GV_searchPathList=()
 	for path in "${list[@]}"; do
-		GV_searchPathList+=( "./$path/" )
+		GV_searchPathList+=( "./$path" )
 	done
 	(( ${#GV_searchPathList[@]} == 0 )) && GV_searchPathList=( ./ )
 }
@@ -188,12 +189,38 @@ initTempDir()
 }
 
 # 음악을 분류.
+# 재생 불가 WAV 파일: 256kbps
 processForMusic()
 {
 	local file saveFullPath
 	for file in $(find "${GV_searchPathList[@]}" -type f -a \( -iname '*.mp3' -o -iname '*.wav' -o -iname '*.wma' \)); do
 		saveFullPath=$(initSavePath Music "$file") || continue
 		cp -f -- "$file" "$saveFullPath"
+	done
+}
+
+# mp3 파일을 분류 및 재생 가능하도록 변환.
+# 재생 불가 MP3 파일: 48, 64, 80, 96, 128, 192kbps stereo; 18, 20, 48 and 56kbps mono;
+# 재생 가능 MP3 파일: 256, 320kbps stereo; 256kbps mono;
+# 256kbps mono나 stereo 모두 정상 동작 하는 걸로 확인됨. mono와 stereo는 결과에 영향을 미치지 않는 것 같다.
+processForMp3()
+{
+	local file saveFullPath temp mode bitrate convertBitrate
+	for file in $(find "${GV_searchPathList[@]}" -type f -a -iname '*.mp3'); do
+		saveFullPath=$(initSavePath Music "$file") || continue
+		temp=$(mp3info -r v -p '%r:%o' "$file")
+		bitrate=${temp%:}
+		#mode=$(grep -wFio -e stereo -e mono <<<"${temp#:}")
+		if (( bitrate == 256 || bitrate == 320 )); then
+			cp -f -- "$file" "$saveFullPath"
+		else
+			if (( bitrate < 256 )); then
+				convertBitrate=256
+			else
+				convertBitrate=320
+			fi
+			lame --silent --mp3input -V 0 -b $convertBitrate "$file" "$saveFullPath"
+		fi
 	done
 }
 
@@ -234,19 +261,6 @@ viewZipList()
 	unzip -l "$file" | head -n -2 | tail -n +4 | awk '{print substr($0,index($0,$4))}'
 }
 
-# 작업 로그를 보여줌.
-showLog()
-{
-	[ -n "$GV_log" ] && (kate --stdin <<<"$GV_log") &
-}
-
-# 작업 완료를 보고
-reportWorkEnd()
-{
-	zenity --info --no-wrap --title 'E-BOOK 형식 변환기' --text '작업이 완료되었습니다.'
-	#notify-send -u normal 'E-BOOK 형식 변환기' '작업이 완료되었습니다.'
-}
-
 # 경로 충돌 대상을 기록.
 recodeBreakList()
 {
@@ -272,6 +286,7 @@ recodeFaileList()
 	fi	
 }
 
+# odt로된 문서 파일도 pdf 파일과 같이 매 페이지가 모두 이미지로 되어 있을 수도 있겠으나, 일반적으로 그런 경우는 없음. 고로, 문자를 주로 하여 작성된 문서 파일이라 가정하여 처리함.
 processForOdt()
 {
 	local file saveFullPath i MAX_TRAY ext 
@@ -318,6 +333,7 @@ main()
 	
 	processForCbz
 	processForPicture
+	processForMp3
 	processForMusic
 	processForPdf
 	processForOdt
@@ -327,9 +343,10 @@ main()
 	recodeBreakList
 	recodeFaileList
 	recodeConvertFailedOdtList
-	showLog
+	[ -n "$GV_log" ] && (kate --stdin <<<"$GV_log") &
 	
-	reportWorkEnd
+	zenity --info --no-wrap --title 'E-BOOK 형식 변환기' --text '작업이 완료되었습니다.'
+	#notify-send -u normal 'E-BOOK 형식 변환기' '작업이 완료되었습니다.'
 	exit 0
 }
 
